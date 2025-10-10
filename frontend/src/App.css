@@ -1,0 +1,99 @@
+.App {
+    text-align: center;
+}
+
+.App-header {
+    background-color: #282c34;
+    padding: 20px;
+    color: white;
+    min-height: 100vh;
+}
+
+.upload-section {
+    margin: 30px 0;
+}
+
+.file-input {
+    margin: 20px;
+    padding: 10px;
+    background: white;
+    border-radius: 5px;
+}
+
+.image-preview {
+    max-width: 300px;
+    max-height: 300px;
+    border-radius: 10px;
+    margin: 20px;
+}
+
+.upload-button {
+    background-color: #61dafb;
+    color: #282c34;
+    border: none;
+    padding: 15px 30px;
+    border-radius: 5px;
+    font-size: 16px;
+    cursor: pointer;
+    margin: 20px;
+}
+
+.upload-button:hover {
+    background-color: #21a9c4;
+}
+
+.upload-button:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+}
+
+.analysis-result {
+    background-color: rgba(255, 255, 255, 0.1);
+    margin: 30px;
+    padding: 20px;
+    border-radius: 10px;
+    text-align: left;
+
+    .spotify-results {
+        background-color: rgba(255, 255, 255, 0.1);
+        margin: 30px;
+        padding: 20px;
+        border-radius: 10px;
+    }
+
+    .spotify-track {
+        background-color: rgba(255, 255, 255, 0.05);
+        margin: 15px 0;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 4px solid #1DB954;
+    }
+
+    .track-info {
+        margin-bottom: 10px;
+        font-size: 16px;
+    }
+
+    .track-links {
+        display: flex;
+        gap: 15px;
+        align-items: center;
+    }
+
+    .track-links a {
+        background-color: #1DB954;
+        color: white;
+        padding: 8px 16px;
+        border-radius: 20px;
+        text-decoration: none;
+        font-size: 14px;
+    }
+
+    .track-links a:hover {
+        background-color: #1ed760;
+    }
+
+    audio {
+        height: 30px;
+    }
+}
