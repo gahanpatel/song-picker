@@ -11,7 +11,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
 import java.util.Map;
 
-@CrossOrigin(origins = "http://127.0.0.1:3000")
+@CrossOrigin(origins = "http:127.0.0.1:3000")
 @RestController
 @RequestMapping("/api/image")
 public class ImageController {
@@ -41,14 +41,6 @@ public class ImageController {
     if (file.isEmpty()) {
       return ResponseEntity.badRequest().body("Please select a file");
     }
-
-    // Remove strict content type checking temporarily to test
-    /*
-    String contentType = file.getContentType();
-    if (contentType == null || !contentType.startsWith("image/")) {
-        return ResponseEntity.badRequest().body("Please upload an image file");
-    }
-    */
 
     try {
       String analysis = openAIService.analyzeImage(file);

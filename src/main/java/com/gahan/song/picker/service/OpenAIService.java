@@ -6,7 +6,6 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.http.*;
 import org.springframework.web.client.RestTemplate;
 
-import java.util.Base64;
 import java.util.Map;
 import java.util.List;
 
@@ -23,7 +22,6 @@ public class OpenAIService {
     String filename = file.getOriginalFilename().toLowerCase();
     long fileSize = file.getSize();
 
-    // Analyze filename for clues about image content
     if (filename.contains("sunset") || filename.contains("dawn") || filename.contains("golden")) {
       return "This image captures a warm, golden hour scene with soft, romantic lighting. The atmosphere is peaceful and contemplative, suggesting music with gentle melodies, acoustic elements, or ambient soundscapes that evoke tranquility and warmth.";
     } else if (filename.contains("party") || filename.contains("concert") || filename.contains("dance")) {
@@ -33,7 +31,7 @@ public class OpenAIService {
     } else if (filename.contains("nature") || filename.contains("forest") || filename.contains("mountain")) {
       return "This image depicts a serene natural landscape that evokes peace and connection with nature. The mood suggests organic, acoustic music - folk songs, classical pieces, or ambient nature sounds that complement this tranquil outdoor setting.";
     } else {
-      // Use file size and random seed for more variation
+
       String[] moodTypes = {"energetic", "calm", "dramatic", "peaceful", "vibrant"};
       int index = (int) ((fileSize + filename.hashCode()) % moodTypes.length);
       String mood = moodTypes[Math.abs(index)];

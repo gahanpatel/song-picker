@@ -24,7 +24,6 @@ public class SpotifyService {
   private final RestTemplate restTemplate = new RestTemplate();
   private String accessToken;
 
-  // Main method for playlist recommendations with hybrid matching
   public List<Map<String, Object>> findPlaylistRecommendations(String aiAnalysis, String playlistUrl) {
     try {
       if (accessToken == null) {
@@ -47,7 +46,6 @@ public class SpotifyService {
         return findRecommendations(aiAnalysis);
       }
 
-      // Use hybrid approach: AcousticBrainz with keyword fallback
       List<Map<String, Object>> matches = matchWithHybridApproach(playlistTracks, aiAnalysis);
       System.out.println("Hybrid matching complete, returning " + matches.size() + " tracks");
 
@@ -60,7 +58,6 @@ public class SpotifyService {
     }
   }
 
-  // Hybrid matching: AcousticBrainz + keyword fallback
   private List<Map<String, Object>> matchWithHybridApproach(List<Map<String, Object>> tracks, String aiAnalysis) {
     System.out.println("=== HYBRID MATCHING (AcousticBrainz + Keywords) ===");
     List<TrackWithScore> scoredTracks = new ArrayList<>();
@@ -74,16 +71,15 @@ public class SpotifyService {
       String artist = (String) track.get("artist");
       double score = 0.0;
 
-      // Try AcousticBrainz first
       Map<String, Double> audioFeatures = acousticBrainzService.getAudioFeatures(trackName, artist);
 
       if (audioFeatures != null && !audioFeatures.isEmpty()) {
-        // Use precise audio feature matching
+
         score = calculateFeatureMatchScore(targetMood, audioFeatures);
         acousticBrainzSuccess++;
         System.out.println("✓ AcousticBrainz: " + trackName + " (score: " + String.format("%.2f", score) + ")");
       } else {
-        // Fall back to keyword matching
+
         score = calculateImprovedScore(track, aiAnalysis.toLowerCase());
         keywordFallback++;
         System.out.println("○ Keyword fallback: " + trackName + " (score: " + String.format("%.2f", score) + ")");
@@ -102,22 +98,18 @@ public class SpotifyService {
             .collect(Collectors.toList());
   }
 
-  // Calculate match score using audio features
   private double calculateFeatureMatchScore(MoodProfile target, Map<String, Double> features) {
     double energy = features.getOrDefault("energy", 0.5);
     double valence = features.getOrDefault("valence", 0.5);
     double danceability = features.getOrDefault("danceability", 0.5);
 
-    // Calculate distance from target mood
     double energyDiff = Math.abs(target.energy - energy);
     double valenceDiff = Math.abs(target.valence - valence);
     double danceabilityDiff = Math.abs(target.danceability - danceability);
 
-    // Return score (1.0 = perfect match, 0.0 = completely different)
     return 1.0 - ((energyDiff + valenceDiff + danceabilityDiff) / 3.0);
   }
 
-  // Analyze AI description to create mood profile
   private MoodProfile analyzeMoodProfile(String aiAnalysis) {
     String analysis = aiAnalysis.toLowerCase();
 
@@ -142,14 +134,12 @@ public class SpotifyService {
     return new MoodProfile(energy, valence, danceability);
   }
 
-  // Keyword-based scoring (fallback method)
   private double calculateImprovedScore(Map<String, Object> track, String analysis) {
     String trackName = ((String) track.get("name")).toLowerCase();
     String artist = ((String) track.get("artist")).toLowerCase();
     String combined = trackName + " " + artist;
     double score = Math.random() * 0.5; // Add variety
 
-    // Energetic/Upbeat moods
     if (analysis.contains("energetic") || analysis.contains("vibrant") ||
             analysis.contains("upbeat") || analysis.contains("bright") ||
             analysis.contains("lively") || analysis.contains("joyful")) {
@@ -160,7 +150,6 @@ public class SpotifyService {
       if (combined.matches(".*(fast|high|up|jump|move).*")) score += 1.5;
     }
 
-    // Calm/Peaceful moods
     if (analysis.contains("peaceful") || analysis.contains("calm") ||
             analysis.contains("serene") || analysis.contains("tranquil") ||
             analysis.contains("gentle") || analysis.contains("soft")) {
@@ -171,7 +160,6 @@ public class SpotifyService {
       if (combined.matches(".*(slow|ballad).*")) score += 1.5;
     }
 
-    // Dramatic/Intense moods
     if (analysis.contains("dramatic") || analysis.contains("intense") ||
             analysis.contains("powerful") || analysis.contains("bold")) {
 
@@ -180,7 +168,6 @@ public class SpotifyService {
       if (combined.matches(".*(dark|metal|rock).*")) score += 2.0;
     }
 
-    // Romantic/Warm moods
     if (analysis.contains("romantic") || analysis.contains("warm") ||
             analysis.contains("intimate") || analysis.contains("sunset")) {
 
@@ -192,7 +179,6 @@ public class SpotifyService {
     return score;
   }
 
-  // Original method for general Spotify search (no playlist)
   public List<Map<String, Object>> findRecommendations(String aiAnalysis) {
     try {
       if (accessToken == null) {
@@ -207,7 +193,7 @@ public class SpotifyService {
     }
   }
 
-  // Extract playlist ID from various URL formats
+
   private String extractPlaylistId(String playlistUrl) {
     if (playlistUrl == null || playlistUrl.isEmpty()) {
       return null;
@@ -230,7 +216,7 @@ public class SpotifyService {
     return null;
   }
 
-  // Get tracks from a specific playlist
+
   private List<Map<String, Object>> getPlaylistTracks(String playlistId) throws Exception {
     List<Map<String, Object>> allTracks = new ArrayList<>();
     String url = "https://api.spotify.com/v1/playlists/" + playlistId + "/tracks?limit=100";
@@ -244,7 +230,6 @@ public class SpotifyService {
 
       allTracks.addAll(parsePlaylistResponse(response.getBody()));
 
-      // Get next page URL if more tracks exist
       url = (String) response.getBody().get("next");
     }
 
@@ -252,7 +237,6 @@ public class SpotifyService {
     return allTracks;
   }
 
-  // Parse the playlist API response
   private List<Map<String, Object>> parsePlaylistResponse(Map<String, Object> response) {
     List<Map<String, Object>> tracks = new ArrayList<>();
 
@@ -273,7 +257,6 @@ public class SpotifyService {
     return tracks;
   }
 
-  // Get Spotify access token (client credentials)
   private void getAccessToken() throws Exception {
     String url = "https://accounts.spotify.com/api/token";
 
@@ -289,7 +272,6 @@ public class SpotifyService {
     accessToken = (String) response.getBody().get("access_token");
   }
 
-  // Search all of Spotify (fallback method)
   private List<Map<String, Object>> searchTracks(String query) throws Exception {
     String url = "https://api.spotify.com/v1/search?q=" + query + "&type=track&limit=5";
 
@@ -302,7 +284,6 @@ public class SpotifyService {
     return parseSpotifyResponse(response.getBody());
   }
 
-  // Parse general search response
   private List<Map<String, Object>> parseSpotifyResponse(Map<String, Object> response) {
     List<Map<String, Object>> tracks = new ArrayList<>();
 
@@ -321,7 +302,6 @@ public class SpotifyService {
     return tracks;
   }
 
-  // Extract search terms from AI analysis
   private String extractSearchTerms(String aiAnalysis) {
     if (aiAnalysis.contains("pop")) return "pop music";
     if (aiAnalysis.contains("rock")) return "rock music";
@@ -332,7 +312,6 @@ public class SpotifyService {
     return "chill music";
   }
 
-  // Helper methods
   private String getArtistName(Map<String, Object> item) {
     List<Map<String, Object>> artists = (List<Map<String, Object>>) item.get("artists");
     return (String) artists.get(0).get("name");
@@ -343,7 +322,7 @@ public class SpotifyService {
     return (String) external_urls.get("spotify");
   }
 
-  // Mock data fallback
+
   private List<Map<String, Object>> getMockSpotifyTracks() {
     return List.of(
             Map.of("name", "Chill Vibes", "artist", "Mock Artist", "preview_url", "", "spotify_url", ""),
@@ -351,7 +330,7 @@ public class SpotifyService {
     );
   }
 
-  // Helper classes
+
   private static class MoodProfile {
     double energy, valence, danceability;
 

@@ -13,16 +13,14 @@ public class AcousticBrainzService {
 
   private final RestTemplate restTemplate = new RestTemplate();
 
-  // Try to get audio features from AcousticBrainz
   public Map<String, Double> getAudioFeatures(String trackName, String artist) {
     try {
-      // First, get MusicBrainz ID
+
       String mbid = getMusicBrainzId(trackName, artist);
       if (mbid == null) {
         return null;
       }
 
-      // Get low-level audio features from AcousticBrainz
       String url = "https://acousticbrainz.org/api/v1/" + mbid + "/low-level";
 
       ResponseEntity<Map> response = restTemplate.getForEntity(url, Map.class);
@@ -35,7 +33,6 @@ public class AcousticBrainzService {
     }
   }
 
-  // Get MusicBrainz ID for a track
   private String getMusicBrainzId(String trackName, String artist) {
     try {
       String encodedTrack = URLEncoder.encode(trackName, StandardCharsets.UTF_8);
@@ -61,7 +58,6 @@ public class AcousticBrainzService {
     return null;
   }
 
-  // Parse AcousticBrainz response into usable features
   private Map<String, Double> parseAudioFeatures(Map<String, Object> data) {
     Map<String, Double> features = new HashMap<>();
 
@@ -69,16 +65,13 @@ public class AcousticBrainzService {
       Map<String, Object> rhythm = (Map<String, Object>) data.get("rhythm");
       Map<String, Object> tonal = (Map<String, Object>) data.get("tonal");
 
-      // Extract tempo/energy
       if (rhythm != null) {
         Double bpm = getDouble(rhythm, "bpm");
         if (bpm != null) {
-          // Normalize BPM to energy scale (0-1)
-          // Typical range: 60-180 BPM
+
           features.put("energy", Math.min(Math.max((bpm - 60) / 120.0, 0.0), 1.0));
         }
 
-        // Danceability from BPM
         if (bpm != null && bpm >= 90 && bpm <= 130) {
           features.put("danceability", 0.8); // Sweet spot for dancing
         } else {
@@ -86,7 +79,6 @@ public class AcousticBrainzService {
         }
       }
 
-      // Extract valence from key (major = happy, minor = sad)
       if (tonal != null) {
         String key = getString(tonal, "key_key");
         if (key != null) {
@@ -105,7 +97,6 @@ public class AcousticBrainzService {
     return features.isEmpty() ? null : features;
   }
 
-  // Helper methods
   private Double getDouble(Map<String, Object> map, String key) {
     Object value = map.get(key);
     if (value instanceof Number) {
