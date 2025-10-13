@@ -8,12 +8,12 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.util.List;
 import java.util.Map;
+import java.util.List;
 
-@CrossOrigin(origins = "http:127.0.0.1:3000")
 @RestController
 @RequestMapping("/api/image")
+@CrossOrigin(origins = {"http://localhost:3000", "http://127.0.0.1:3000"})
 public class ImageController {
 
   @Autowired
@@ -32,11 +32,8 @@ public class ImageController {
           @RequestParam("image") MultipartFile file,
           @RequestParam(value = "playlistUrl", required = false) String playlistUrl) {
 
-    System.out.println("=== FILE DEBUG INFO ===");
-    System.out.println("Original filename: " + file.getOriginalFilename());
-    System.out.println("Content type: " + file.getContentType());
-    System.out.println("File size: " + file.getSize());
-    System.out.println("Is empty: " + file.isEmpty());
+    System.out.println("=== CONTROLLER RECEIVED REQUEST ===");
+    System.out.println("File: " + file.getOriginalFilename());
 
     if (file.isEmpty()) {
       return ResponseEntity.badRequest().body("Please select a file");
@@ -47,10 +44,8 @@ public class ImageController {
 
       List<Map<String, Object>> spotifyTracks;
       if (playlistUrl != null && !playlistUrl.isEmpty()) {
-        System.out.println("Using playlist-specific search");
         spotifyTracks = spotifyService.findPlaylistRecommendations(analysis, playlistUrl);
       } else {
-        System.out.println("Using general Spotify search");
         spotifyTracks = spotifyService.findRecommendations(analysis);
       }
 
@@ -59,7 +54,7 @@ public class ImageController {
               "spotify_tracks", spotifyTracks
       ));
     } catch (Exception e) {
-      System.out.println("Error processing file: " + e.getMessage());
+      System.out.println("Error: " + e.getMessage());
       e.printStackTrace();
       return ResponseEntity.status(500).body("Error: " + e.getMessage());
     }

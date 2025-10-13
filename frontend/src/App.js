@@ -89,8 +89,30 @@ function App() {
 
                 {analysis && (
                     <div className="analysis-result">
-                        <h3>AI Analysis:</h3>
-                        <p>{analysis}</p>
+                        <h3>AI Analysis</h3>
+                        <div className="analysis-content">
+                            {analysis.split('\n\n').map((paragraph, index) => {
+                                // Remove ** markers
+                                let cleanParagraph = paragraph.replace(/\*\*/g, '');
+
+                                // Check if it's a heading (contains a colon)
+                                if (cleanParagraph.includes(':')) {
+                                    const [heading, ...rest] = cleanParagraph.split(':');
+                                    return (
+                                        <div key={index} className="analysis-section">
+                                            <strong
+                                                className="analysis-heading">{heading.trim()}:</strong>
+                                            <span className="analysis-text">{rest.join(':')
+                                                .trim()}</span>
+                                        </div>
+                                    );
+                                }
+
+                                // Regular paragraph
+                                return <p key={index}
+                                          className="analysis-paragraph">{cleanParagraph}</p>;
+                            })}
+                        </div>
                     </div>
                 )}
 
