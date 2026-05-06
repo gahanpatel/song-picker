@@ -1,134 +1,324 @@
-.App {
-    text-align: center;
-}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-.App-header {
-    background-color: #282c34;
-    padding: 20px;
-    color: white;
+body {
+    background: #0d0d0d;
+    color: #e8e8e8;
     min-height: 100vh;
 }
 
-.upload-section {
-    margin: 30px 0;
+/* ── Layout ── */
+
+.app {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 48px 20px 80px;
 }
 
-.file-input {
-    margin: 20px;
-    padding: 10px;
-    background: white;
-    border-radius: 5px;
+.app-header {
+    text-align: center;
+    margin-bottom: 48px;
 }
 
-.image-preview {
-    max-width: 300px;
-    max-height: 300px;
-    border-radius: 10px;
-    margin: 20px;
+.app-title {
+    font-size: 2.6rem;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: #fff;
 }
 
-.upload-button {
-    background-color: #61dafb;
-    color: #282c34;
-    border: none;
-    padding: 15px 30px;
-    border-radius: 5px;
-    font-size: 16px;
+.app-subtitle {
+    margin-top: 8px;
+    color: #666;
+    font-size: 1rem;
+}
+
+.app-main {
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+}
+
+/* ── Upload card ── */
+
+.upload-card {
+    background: #161616;
+    border: 1px solid #222;
+    border-radius: 16px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+/* ── Drop zone ── */
+
+.drop-zone {
+    border: 2px dashed #2a2a2a;
+    border-radius: 12px;
+    min-height: 200px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     cursor: pointer;
-    margin: 20px;
+    transition: border-color 0.2s, background 0.2s;
+    overflow: hidden;
 }
 
-.upload-button:hover {
-    background-color: #21a9c4;
+.drop-zone:hover,
+.drop-zone.dragging {
+    border-color: #1DB954;
+    background: rgba(29, 185, 84, 0.04);
 }
 
-.upload-button:disabled {
-    background-color: #ccc;
-    cursor: not-allowed;
+.drop-zone.has-preview {
+    border-style: solid;
+    border-color: #2a2a2a;
+    min-height: 280px;
 }
 
-.analysis-result {
-    background-color: rgba(255, 255, 255, 0.1);
-    margin: 30px;
-    padding: 20px;
+.hidden-input { display: none; }
+
+.drop-prompt {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    color: #444;
+    user-select: none;
+}
+
+.drop-icon {
+    width: 40px;
+    height: 40px;
+    color: #3a3a3a;
+}
+
+.drop-prompt p {
+    font-size: 0.95rem;
+    color: #555;
+}
+
+.drop-hint {
+    font-size: 0.8rem;
+    color: #3a3a3a;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.preview-img {
+    width: 100%;
+    height: 100%;
+    max-height: 340px;
+    object-fit: contain;
+}
+
+.file-name {
+    font-size: 0.78rem;
+    color: #444;
+    text-align: center;
+}
+
+/* ── Inputs ── */
+
+.playlist-input {
+    background: #0d0d0d;
+    border: 1px solid #242424;
+    border-radius: 8px;
+    padding: 11px 14px;
+    color: #e8e8e8;
+    font-size: 0.875rem;
+    font-family: inherit;
+    width: 100%;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.playlist-input:focus { border-color: #1DB954; }
+.playlist-input::placeholder { color: #3a3a3a; }
+
+/* ── Error ── */
+
+.error-msg {
+    color: #ff5c5c;
+    font-size: 0.85rem;
+    text-align: center;
+}
+
+/* ── Button ── */
+
+.analyze-btn {
+    background: #1DB954;
+    color: #000;
+    border: none;
+    border-radius: 8px;
+    padding: 13px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: background 0.15s, opacity 0.15s;
+}
+
+.analyze-btn:hover:not(:disabled) { background: #1ed760; }
+.analyze-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* ── Spinner ── */
+
+.spinner {
+    width: 15px;
+    height: 15px;
+    border: 2px solid rgba(0, 0, 0, 0.25);
+    border-top-color: #000;
+    border-radius: 50%;
+    animation: spin 0.65s linear infinite;
+    flex-shrink: 0;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Results ── */
+
+.results-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+@media (max-width: 620px) {
+    .results-grid { grid-template-columns: 1fr; }
+    .app-title { font-size: 2rem; }
+}
+
+.result-card {
+    background: #161616;
+    border: 1px solid #222;
+    border-radius: 16px;
+    padding: 22px;
+}
+
+.card-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #444;
+    margin-bottom: 18px;
+}
+
+/* ── Analysis ── */
+
+.analysis-body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.analysis-section {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.analysis-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #1DB954;
+}
+
+.analysis-text {
+    font-size: 0.875rem;
+    color: #bbb;
+    line-height: 1.65;
+}
+
+.analysis-para {
+    font-size: 0.875rem;
+    color: #bbb;
+    line-height: 1.7;
+}
+
+/* ── Track list ── */
+
+.track-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.track-item {
+    background: #0d0d0d;
+    border: 1px solid #1e1e1e;
     border-radius: 10px;
-    text-align: left;
-
-    .spotify-results {
-        background-color: rgba(255, 255, 255, 0.1);
-        margin: 30px;
-        padding: 20px;
-        border-radius: 10px;
-    }
-
-    .spotify-track {
-        background-color: rgba(255, 255, 255, 0.05);
-        margin: 15px 0;
-        padding: 15px;
-        border-radius: 8px;
-        border-left: 4px solid #1DB954;
-    }
-
-    .track-info {
-        margin-bottom: 10px;
-        font-size: 16px;
-    }
-
-    .track-links {
-        display: flex;
-        gap: 15px;
-        align-items: center;
-    }
-
-    .track-links a {
-        background-color: #1DB954;
-        color: white;
-        padding: 8px 16px;
-        border-radius: 20px;
-        text-decoration: none;
-        font-size: 14px;
-    }
-
-    .track-links a:hover {
-        background-color: #1ed760;
-    }
-
-    audio {
-        height: 30px;
-    }
-
-    .analysis-result {
-        background-color: rgba(255, 255, 255, 0.1);
-        margin: 30px;
-        padding: 20px;
-        border-radius: 10px;
-        text-align: left;
-    }
-
-    .analysis-content {
-        line-height: 1.8;
-    }
-
-    .analysis-section {
-        margin-bottom: 15px;
-        display: block;
-    }
-
-    .analysis-heading {
-        color: #61dafb;
-        display: block;
-        margin-bottom: 5px;
-        font-size: 16px;
-    }
-
-    .analysis-text {
-        display: block;
-        margin-left: 10px;
-        color: #ffffff;
-    }
-
-    .analysis-paragraph {
-        margin-bottom: 15px;
-        line-height: 1.6;
-    }
+    padding: 12px 14px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
 }
+
+.track-num {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #333;
+    min-width: 16px;
+    padding-top: 2px;
+    text-align: right;
+}
+
+.track-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    flex: 1;
+    min-width: 0;
+}
+
+.track-name {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.track-artist {
+    font-size: 0.78rem;
+    color: #555;
+}
+
+.track-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+}
+
+audio {
+    height: 26px;
+    flex: 1;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.spotify-btn {
+    background: #1DB954;
+    color: #000;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 5px 11px;
+    border-radius: 20px;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background 0.15s;
+    flex-shrink: 0;
+}
+
+.spotify-btn:hover { background: #1ed760; }

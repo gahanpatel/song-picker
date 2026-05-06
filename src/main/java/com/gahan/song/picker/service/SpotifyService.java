@@ -5,6 +5,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.http.*;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -275,7 +277,7 @@ public class SpotifyService {
   }
 
   private List<Map<String, Object>> searchTracks(String query) throws Exception {
-    String url = "https://api.spotify.com/v1/search?q=" + query + "&type=track&limit=5";
+    String url = "https://api.spotify.com/v1/search?q=" + URLEncoder.encode(query, StandardCharsets.UTF_8) + "&type=track&limit=5";
 
     HttpHeaders headers = new HttpHeaders();
     headers.set("Authorization", "Bearer " + accessToken);
@@ -305,13 +307,33 @@ public class SpotifyService {
   }
 
   private String extractSearchTerms(String aiAnalysis) {
-    if (aiAnalysis.contains("pop")) return "pop music";
-    if (aiAnalysis.contains("rock")) return "rock music";
-    if (aiAnalysis.contains("jazz")) return "jazz";
-    if (aiAnalysis.contains("electronic")) return "electronic music";
-    if (aiAnalysis.contains("acoustic")) return "acoustic";
-    if (aiAnalysis.contains("indie")) return "indie music";
-    return "chill music";
+    String a = aiAnalysis.toLowerCase();
+
+    boolean energetic = a.contains("energetic") || a.contains("upbeat") || a.contains("vibrant") || a.contains("lively");
+    boolean calm      = a.contains("calm") || a.contains("peaceful") || a.contains("serene") || a.contains("tranquil") || a.contains("gentle");
+    boolean dramatic  = a.contains("dramatic") || a.contains("intense") || a.contains("powerful") || a.contains("epic");
+    boolean romantic  = a.contains("romantic") || a.contains("intimate") || a.contains("warm") || a.contains("tender");
+    boolean sad       = a.contains("sad") || a.contains("melancholy") || a.contains("somber") || a.contains("dark") || a.contains("gloomy");
+    boolean happy     = a.contains("happy") || a.contains("joyful") || a.contains("cheerful") || a.contains("bright");
+
+    if (a.contains("jazz"))                              return calm ? "smooth jazz" : "upbeat jazz";
+    if (a.contains("classical") || a.contains("orchestra")) return dramatic ? "epic orchestral" : "classical peaceful";
+    if (a.contains("electronic") || a.contains("edm")) return calm ? "ambient electronic" : "electronic dance";
+    if (a.contains("hip hop") || a.contains("hip-hop")) return "hip hop";
+    if (a.contains("rock"))                             return energetic ? "energetic rock" : "alternative rock";
+    if (a.contains("acoustic") || a.contains("folk"))  return calm ? "acoustic folk calm" : "indie folk";
+    if (a.contains("indie"))                            return calm ? "indie folk" : "indie pop";
+    if (a.contains("pop"))                              return energetic ? "upbeat pop" : "pop";
+
+    if (dramatic)           return "cinematic epic dramatic";
+    if (energetic && happy) return "upbeat energetic happy";
+    if (energetic)          return "energetic powerful";
+    if (romantic)           return "romantic soft ballad";
+    if (sad)                return "sad melancholy emotional";
+    if (calm)               return "calm peaceful ambient";
+    if (happy)              return "happy cheerful";
+
+    return "atmospheric mood";
   }
 
   private String getArtistName(Map<String, Object> item) {

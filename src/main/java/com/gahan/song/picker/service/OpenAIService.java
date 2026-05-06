@@ -36,7 +36,7 @@ public class OpenAIService {
 
       // Create the request payload
       System.out.println("Creating request body...");
-      Map<String, Object> requestBody = createRequestBody(base64Image);
+      Map<String, Object> requestBody = createRequestBody(base64Image, file.getContentType());
       System.out.println("Request body created");
 
       // Set headers
@@ -78,7 +78,8 @@ public class OpenAIService {
     return Base64.getEncoder().encodeToString(imageBytes);
   }
 
-  private Map<String, Object> createRequestBody(String base64Image) {
+  private Map<String, Object> createRequestBody(String base64Image, String contentType) {
+    String mimeType = (contentType != null && contentType.startsWith("image/")) ? contentType : "image/jpeg";
     return Map.of(
             "model", "gpt-4o",
             "messages", List.of(
@@ -92,7 +93,7 @@ public class OpenAIService {
                                     Map.of(
                                             "type", "image_url",
                                             "image_url", Map.of(
-                                                    "url", "data:image/jpeg;base64," + base64Image
+                                                    "url", "data:" + mimeType + ";base64," + base64Image
                                             )
                                     )
                             )

@@ -1,147 +1,185 @@
-import React, {useState, useEffect} from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 
 function App() {
     const [selectedFile, setSelectedFile] = useState(null);
+    const [previewUrl, setPreviewUrl] = useState(null);
     const [analysis, setAnalysis] = useState('');
     const [spotifyTracks, setSpotifyTracks] = useState([]);
     const [playlistUrl, setPlaylistUrl] = useState('');
     const [loading, setLoading] = useState(false);
+    const [error, setError] = useState('');
+    const [dragging, setDragging] = useState(false);
+    const fileInputRef = useRef(null);
 
-    const handleFileSelect = (event) => {
-        setSelectedFile(event.target.files[0]);
+    useEffect(() => {
+        if (!selectedFile) { setPreviewUrl(null); return; }
+        const url = URL.createObjectURL(selectedFile);
+        setPreviewUrl(url);
+        return () => URL.revokeObjectURL(url);
+    }, [selectedFile]);
+
+    const handleFile = (file) => {
+        if (!file) return;
+        if (!file.type.startsWith('image/')) {
+            setError('Please select an image file.');
+            return;
+        }
+        setSelectedFile(file);
         setAnalysis('');
         setSpotifyTracks([]);
+        setError('');
+    };
+
+    const handleDrop = (e) => {
+        e.preventDefault();
+        setDragging(false);
+        handleFile(e.dataTransfer.files[0]);
     };
 
     const handleUpload = async () => {
-        if (!selectedFile) {
-            alert('Please select an image first');
-            return;
-        }
-
+        if (!selectedFile) return;
         setLoading(true);
+        setError('');
+
         const formData = new FormData();
         formData.append('image', selectedFile);
-
-        if (playlistUrl && playlistUrl.trim() !== '') {
-            formData.append('playlistUrl', playlistUrl.trim());
-        }
+        if (playlistUrl.trim()) formData.append('playlistUrl', playlistUrl.trim());
 
         try {
             const response = await fetch('http://127.0.0.1:8080/api/image/analyze', {
                 method: 'POST',
-                body: formData
+                body: formData,
             });
-
+            if (!response.ok) throw new Error(`Server error ${response.status}`);
             const result = await response.json();
             setAnalysis(result.analysis);
             setSpotifyTracks(result.spotify_tracks || []);
-        } catch (error) {
-            console.error('Error:', error);
-            setAnalysis('Error analyzing image. Please try again.');
+        } catch (err) {
+            setError('Failed to analyze image. Make sure the backend is running.');
         } finally {
             setLoading(false);
         }
     };
 
-    return (
-        <div className="App">
-            <header className="App-header">
-                <h1>Song Picker</h1>
-                <p>Upload an image and get music recommendations based on its mood!</p>
+    const hasResults = analysis || spotifyTracks.length > 0;
 
-                <div className="upload-section">
-                    <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleFileSelect}
-                        className="file-input"
-                    />
+    return (
+        <div className="app">
+            <header className="app-header">
+                <h1 className="app-title">Song Picker</h1>
+                <p className="app-subtitle">Drop an image, get music that matches its mood</p>
+            </header>
+
+            <main className="app-main">
+                <div className="upload-card">
+                    <div
+                        className={`drop-zone${dragging ? ' dragging' : ''}${previewUrl ? ' has-preview' : ''}`}
+                        onClick={() => fileInputRef.current.click()}
+                        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+                        onDragLeave={() => setDragging(false)}
+                        onDrop={handleDrop}
+                    >
+                        {previewUrl ? (
+                            <img src={previewUrl} alt="Preview" className="preview-img" />
+                        ) : (
+                            <div className="drop-prompt">
+                                <svg className="drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                                    <circle cx="8.5" cy="8.5" r="1.5" />
+                                    <path d="M21 15l-5-5L5 21" />
+                                </svg>
+                                <p>Drag &amp; drop an image here</p>
+                                <span className="drop-hint">or click to browse</span>
+                            </div>
+                        )}
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => handleFile(e.target.files[0])}
+                            className="hidden-input"
+                        />
+                    </div>
+
+                    {previewUrl && (
+                        <p className="file-name">{selectedFile.name}</p>
+                    )}
 
                     <input
                         type="url"
-                        placeholder="Paste Spotify playlist link (optional)"
+                        placeholder="Spotify playlist URL (optional)"
                         value={playlistUrl}
                         onChange={(e) => setPlaylistUrl(e.target.value)}
                         className="playlist-input"
                     />
 
-                    {selectedFile && (
-                        <div className="file-preview">
-                            <p>Selected: {selectedFile.name}</p>
-                            <img
-                                src={URL.createObjectURL(selectedFile)}
-                                alt="Preview"
-                                className="image-preview"
-                            />
-                        </div>
-                    )}
+                    {error && <p className="error-msg">{error}</p>}
 
                     <button
                         onClick={handleUpload}
                         disabled={!selectedFile || loading}
-                        className="upload-button"
+                        className="analyze-btn"
                     >
-                        {loading ? 'Analyzing...' : 'Get Music Recommendations'}
+                        {loading && <span className="spinner" />}
+                        {loading ? 'Analyzing…' : 'Get Recommendations'}
                     </button>
                 </div>
 
-                {analysis && (
-                    <div className="analysis-result">
-                        <h3>AI Analysis</h3>
-                        <div className="analysis-content">
-                            {analysis.split('\n\n').map((paragraph, index) => {
-                                // Remove ** markers
-                                let cleanParagraph = paragraph.replace(/\*\*/g, '');
+                {hasResults && (
+                    <div className="results-grid">
+                        {analysis && (
+                            <section className="result-card">
+                                <h2 className="card-label">AI Analysis</h2>
+                                <div className="analysis-body">
+                                    {analysis.split('\n\n').map((para, i) => {
+                                        const clean = para.replace(/\*\*/g, '');
+                                        const colonIdx = clean.indexOf(':');
+                                        if (colonIdx > 0 && colonIdx < 40) {
+                                            return (
+                                                <div key={i} className="analysis-section">
+                                                    <span className="analysis-label">{clean.slice(0, colonIdx)}</span>
+                                                    <span className="analysis-text">{clean.slice(colonIdx + 1).trim()}</span>
+                                                </div>
+                                            );
+                                        }
+                                        return <p key={i} className="analysis-para">{clean}</p>;
+                                    })}
+                                </div>
+                            </section>
+                        )}
 
-                                // Check if it's a heading (contains a colon)
-                                if (cleanParagraph.includes(':')) {
-                                    const [heading, ...rest] = cleanParagraph.split(':');
-                                    return (
-                                        <div key={index} className="analysis-section">
-                                            <strong
-                                                className="analysis-heading">{heading.trim()}:</strong>
-                                            <span className="analysis-text">{rest.join(':')
-                                                .trim()}</span>
-                                        </div>
-                                    );
-                                }
-
-                                // Regular paragraph
-                                return <p key={index}
-                                          className="analysis-paragraph">{cleanParagraph}</p>;
-                            })}
-                        </div>
+                        {spotifyTracks.length > 0 && (
+                            <section className="result-card">
+                                <h2 className="card-label">Recommended Tracks</h2>
+                                <ol className="track-list">
+                                    {spotifyTracks.map((track, i) => (
+                                        <li key={i} className="track-item">
+                                            <span className="track-num">{i + 1}</span>
+                                            <div className="track-meta">
+                                                <span className="track-name">{track.name}</span>
+                                                <span className="track-artist">{track.artist}</span>
+                                                <div className="track-controls">
+                                                    {track.preview_url && (
+                                                        <audio controls>
+                                                            <source src={track.preview_url} type="audio/mpeg" />
+                                                        </audio>
+                                                    )}
+                                                    {track.spotify_url && (
+                                                        <a href={track.spotify_url} target="_blank" rel="noopener noreferrer" className="spotify-btn">
+                                                            Open in Spotify
+                                                        </a>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </li>
+                                    ))}
+                                </ol>
+                            </section>
+                        )}
                     </div>
                 )}
-
-                {spotifyTracks.length > 0 && (
-                    <div className="spotify-results">
-                        <h3>Recommended Tracks:</h3>
-                        {spotifyTracks.map((track, index) => (
-                            <div key={index} className="spotify-track">
-                                <div className="track-info">
-                                    <strong>{track.name}</strong> by {track.artist}
-                                </div>
-                                <div className="track-links">
-                                    {track.preview_url && (
-                                        <audio controls>
-                                            <source src={track.preview_url} type="audio/mpeg"/>
-                                        </audio>
-                                    )}
-                                    {track.spotify_url && (
-                                        <a href={track.spotify_url} target="_blank"
-                                           rel="noopener noreferrer">
-                                            Open in Spotify
-                                        </a>
-                                    )}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </header>
+            </main>
         </div>
     );
 }
