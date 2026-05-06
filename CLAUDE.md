@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Song Picker is a full-stack application that analyzes images via OpenAI Vision (GPT-4o) and recommends music by matching the image's mood/emotional tone against Spotify tracks. Audio features from MusicBrainz/AcousticBrainz are used for more accurate mood matching when available.
+Song Picker is a full-stack application that analyzes images via OpenAI Vision (GPT-4o) and recommends music by matching the image's mood/emotional tone against Spotify tracks. Spotify's `/audio-features` endpoint is used for accurate mood matching when a playlist is provided.
 
 ## Commands
 
@@ -33,14 +33,13 @@ npm test        # Run tests
 4. `SpotifyService` uses that description two ways:
    - **No playlist**: extracts search terms and searches Spotify directly.
    - **With playlist**: fetches all tracks from the playlist URL, scores each track, and returns the top 5.
-5. Scoring is hybrid: `AcousticBrainzService` looks up audio features (energy, valence, danceability) via MusicBrainz → AcousticBrainz; if that fails, keyword regex scoring is used as fallback.
+5. Scoring is hybrid: `SpotifyService` calls `GET /v1/audio-features/{id}` for each track to get energy, valence, and danceability; if that fails, keyword regex scoring is used as fallback.
 6. Response JSON `{ analysis: string, spotify_tracks: Track[] }` is rendered in the frontend.
 
 ### Key Backend Classes
 - [ImageController.java](src/main/java/com/gahan/song/picker/controller/ImageController.java) — single REST endpoint, CORS configured for localhost:3000
 - [OpenAIService.java](src/main/java/com/gahan/song/picker/service/OpenAIService.java) — GPT-4o vision call; falls back to filename-heuristic mock on failure
 - [SpotifyService.java](src/main/java/com/gahan/song/picker/service/SpotifyService.java) — Client Credentials OAuth, track search, hybrid mood scoring
-- [AcousticBrainzService.java](src/main/java/com/gahan/song/picker/service/AcousticBrainzService.java) — MusicBrainz recording lookup + AcousticBrainz audio features
 
 ### Frontend
 - [frontend/src/App.js](frontend/src/App.js) — single-component React app; handles upload, displays analysis text and track cards with audio preview
@@ -58,4 +57,4 @@ Max upload size is 10 MB (configurable in the same file).
 All three external API calls have explicit fallbacks so the app degrades gracefully:
 - OpenAI failure → mock analysis derived from the image filename
 - Spotify failure → mock track list
-- AcousticBrainz failure → regex keyword scoring against the AI description
+- Spotify audio features failure → regex keyword scoring against the AI description

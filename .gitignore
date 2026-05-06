@@ -25,3 +25,5 @@ replay_pid*
 
 application.properties
 src/main/resources/application.properties
+
+CLAUDE.md
