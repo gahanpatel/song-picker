@@ -6,6 +6,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.http.*;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -23,6 +25,11 @@ public class SpotifyService {
   private String accessToken;
   private Instant tokenExpiresAt = Instant.MIN;
 
+  // Cache playlist track IDs by playlist ID — avoids re-fetching paginated Spotify calls
+  private final Map<String, List<String>> playlistCache = new HashMap<>();
+
+  private static final String RECCOBEATS_URL = "https://api.reccobeats.com/v1/track/recommendation";
+
   // ── Public API ──────────────────────────────────────────────────────────────
 
   public List<Map<String, Object>> findPlaylistRecommendations(ImageAnalysis analysis, String playlistUrl) {
@@ -34,11 +41,10 @@ public class SpotifyService {
       List<String> trackIds = getPlaylistTrackIds(playlistId);
       if (trackIds.isEmpty()) return findRecommendations(analysis);
 
-      // Pick up to 5 random tracks from the playlist as seeds
       Collections.shuffle(trackIds);
-      String seeds = trackIds.stream().limit(5).collect(Collectors.joining(","));
+      List<String> seeds = trackIds.stream().limit(5).collect(Collectors.toList());
 
-      return getRecommendations("seed_tracks", seeds, analysis.moodProfile);
+      return reccoBeatsRecommendations(seeds, analysis.moodProfile);
 
     } catch (Exception e) {
       System.out.println("Playlist recommendations failed: " + e.getMessage());
@@ -49,80 +55,92 @@ public class SpotifyService {
   public List<Map<String, Object>> findRecommendations(ImageAnalysis analysis) {
     try {
       ensureValidToken();
-      String genres = moodToGenres(analysis.moodProfile);
-      return getRecommendations("seed_genres", genres, analysis.moodProfile);
+
+      // Search Spotify for 1-3 seed tracks matching the mood, then use them as ReccoBeats seeds
+      String query = extractSearchTerms(analysis);
+      List<String> seeds = searchTrackIds(query, 3);
+      if (seeds.isEmpty()) return getMockSpotifyTracks();
+
+      return reccoBeatsRecommendations(seeds, analysis.moodProfile);
+
     } catch (Exception e) {
+      System.out.println("Recommendations failed: " + e.getMessage());
       return getMockSpotifyTracks();
     }
   }
 
-  // ── Recommendations ─────────────────────────────────────────────────────────
+  // ── ReccoBeats ───────────────────────────────────────────────────────────────
 
-  private List<Map<String, Object>> getRecommendations(String seedType, String seeds,
-                                                        Map<String, Double> mood) throws Exception {
+  private List<Map<String, Object>> reccoBeatsRecommendations(List<String> seedIds,
+                                                               Map<String, Double> mood) throws Exception {
     double energy       = mood.getOrDefault("energy",       0.5);
     double valence      = mood.getOrDefault("valence",      0.5);
     double danceability = mood.getOrDefault("danceability", 0.5);
     double acousticness = mood.getOrDefault("acousticness", 0.5);
-    double bpm          = 60 + mood.getOrDefault("tempo",   0.5) * 120; // 0–1 → 60–180 BPM
 
-    String url = "https://api.spotify.com/v1/recommendations"
-            + "?" + seedType + "=" + seeds
-            + "&limit=5"
-            + "&target_energy="       + String.format("%.2f", energy)
-            + "&target_valence="      + String.format("%.2f", valence)
-            + "&target_danceability=" + String.format("%.2f", danceability)
-            + "&target_acousticness=" + String.format("%.2f", acousticness)
-            + "&target_tempo="        + String.format("%.0f", bpm);
+    String seeds = String.join(",", seedIds);
+    String url = RECCOBEATS_URL
+            + "?seeds=" + seeds
+            + "&size=5"
+            + "&energy="       + String.format("%.2f", energy)
+            + "&valence="      + String.format("%.2f", valence)
+            + "&danceability=" + String.format("%.2f", danceability)
+            + "&acousticness=" + String.format("%.2f", acousticness);
 
+    ResponseEntity<Map> response = restTemplate.exchange(
+            url, HttpMethod.GET, new HttpEntity<>(new HttpHeaders()), Map.class);
+
+    List<Map<String, Object>> content = (List<Map<String, Object>>) response.getBody().get("content");
+    System.out.println("ReccoBeats returned " + (content != null ? content.size() : 0) + " tracks");
+    return parseReccoBeats(content);
+  }
+
+  private List<Map<String, Object>> parseReccoBeats(List<Map<String, Object>> content) {
+    List<Map<String, Object>> tracks = new ArrayList<>();
+    if (content == null) return tracks;
+
+    for (Map<String, Object> item : content) {
+      List<Map<String, Object>> artists = (List<Map<String, Object>>) item.get("artists");
+      String artist = artists != null && !artists.isEmpty() ? (String) artists.get(0).get("name") : "Unknown";
+
+      Map<String, Object> track = new HashMap<>();
+      track.put("name",        item.get("trackTitle"));
+      track.put("artist",      artist);
+      track.put("spotify_url", item.get("href"));
+      track.put("preview_url", null);
+      tracks.add(track);
+    }
+    return tracks;
+  }
+
+  // ── Spotify helpers ───────────────────────────────────────────────────────────
+
+  private List<String> searchTrackIds(String query, int limit) throws Exception {
+    String url = "https://api.spotify.com/v1/search?q="
+            + URLEncoder.encode(query, StandardCharsets.UTF_8)
+            + "&type=track&limit=" + limit;
     HttpHeaders headers = new HttpHeaders();
     headers.set("Authorization", "Bearer " + accessToken);
     ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers), Map.class);
 
-    List<Map<String, Object>> tracks = parseTracks(
-            (List<Map<String, Object>>) response.getBody().get("tracks"));
-    System.out.println("Recommendations returned " + tracks.size() + " tracks via " + seedType);
-    return tracks;
+    List<Map<String, Object>> items = (List<Map<String, Object>>)
+            ((Map<String, Object>) response.getBody().get("tracks")).get("items");
+
+    return items.stream()
+            .map(item -> (String) item.get("id"))
+            .filter(Objects::nonNull)
+            .collect(Collectors.toList());
   }
-
-  private String moodToGenres(Map<String, Double> mood) {
-    double energy       = mood.getOrDefault("energy",       0.5);
-    double valence      = mood.getOrDefault("valence",      0.5);
-    double acousticness = mood.getOrDefault("acousticness", 0.5);
-
-    List<String> genres = new ArrayList<>();
-
-    if (acousticness > 0.6) {
-      genres.add("acoustic");
-      genres.add(energy < 0.4 ? "folk" : "indie");
-    } else if (energy > 0.7 && valence > 0.6) {
-      genres.add("pop");
-      genres.add("dance");
-    } else if (energy > 0.7) {
-      genres.add("rock");
-      genres.add("work-out");
-    } else if (energy < 0.3 && valence < 0.4) {
-      genres.add("sad");
-      genres.add("ambient");
-    } else if (energy < 0.3) {
-      genres.add("ambient");
-      genres.add("sleep");
-    } else if (valence > 0.65) {
-      genres.add("pop");
-      genres.add("happy");
-    } else {
-      genres.add("indie");
-      genres.add("chill");
-    }
-
-    return String.join(",", genres);
-  }
-
-  // ── Spotify API helpers ──────────────────────────────────────────────────────
 
   private List<String> getPlaylistTrackIds(String playlistId) throws Exception {
+    if (playlistCache.containsKey(playlistId)) {
+      System.out.println("Playlist cache hit for " + playlistId);
+      return playlistCache.get(playlistId);
+    }
+
     List<String> ids = new ArrayList<>();
-    String url = "https://api.spotify.com/v1/playlists/" + playlistId + "/tracks?limit=100&fields=items(track(id)),next";
+    String url = "https://api.spotify.com/v1/playlists/" + playlistId
+            + "/tracks?limit=100&fields=items(track(id)),next";
 
     while (url != null) {
       HttpHeaders headers = new HttpHeaders();
@@ -130,37 +148,48 @@ public class SpotifyService {
       ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers), Map.class);
       Map<String, Object> body = response.getBody();
 
-      List<Map<String, Object>> items = (List<Map<String, Object>>) body.get("items");
-      for (Map<String, Object> item : items) {
+      for (Map<String, Object> item : (List<Map<String, Object>>) body.get("items")) {
         Map<String, Object> track = (Map<String, Object>) item.get("track");
         if (track != null && track.get("id") != null) ids.add((String) track.get("id"));
       }
       url = (String) body.get("next");
     }
-    System.out.println("Loaded " + ids.size() + " track IDs from playlist");
+
+    System.out.println("Loaded " + ids.size() + " track IDs from playlist, caching");
+    playlistCache.put(playlistId, ids);
     return ids;
   }
 
-  private List<Map<String, Object>> parseTracks(List<Map<String, Object>> items) {
-    List<Map<String, Object>> tracks = new ArrayList<>();
-    if (items == null) return tracks;
-    for (Map<String, Object> item : items) {
-      Map<String, Object> track = new HashMap<>();
-      track.put("name",        item.get("name"));
-      track.put("artist",      getArtistName(item));
-      track.put("preview_url", item.get("preview_url"));
-      track.put("spotify_url", getSpotifyUrl(item));
-      tracks.add(track);
-    }
-    return tracks;
+  private String extractSearchTerms(ImageAnalysis analysis) {
+    String text = analysis.text.toLowerCase();
+    Map<String, Double> m = analysis.moodProfile;
+
+    double energy       = m.getOrDefault("energy",       0.5);
+    double valence      = m.getOrDefault("valence",      0.5);
+    double acousticness = m.getOrDefault("acousticness", 0.5);
+
+    if (text.contains("jazz"))                                return energy > 0.5 ? "upbeat jazz" : "smooth jazz";
+    if (text.contains("classical") || text.contains("orchestra")) return energy > 0.6 ? "epic orchestral" : "classical peaceful";
+    if (text.contains("electronic") || text.contains("edm")) return energy < 0.4 ? "ambient electronic" : "electronic dance";
+    if (text.contains("hip hop") || text.contains("hip-hop")) return "hip hop";
+    if (text.contains("rock"))                                return energy > 0.6 ? "energetic rock" : "alternative rock";
+    if (text.contains("acoustic") || text.contains("folk"))  return acousticness > 0.6 ? "acoustic folk" : "indie folk";
+    if (text.contains("indie"))                               return valence < 0.4 ? "indie folk" : "indie pop";
+    if (text.contains("pop"))                                 return energy > 0.6 ? "upbeat pop" : "pop";
+
+    if (energy > 0.7 && valence > 0.6)  return "upbeat energetic happy";
+    if (energy > 0.7)                   return "intense powerful dramatic";
+    if (valence < 0.35)                 return "sad melancholy emotional";
+    if (acousticness > 0.7)             return "acoustic folk ambient";
+    if (energy < 0.35 && valence > 0.5) return "calm peaceful ambient";
+    if (valence > 0.65)                 return "happy cheerful bright";
+    return "atmospheric mood";
   }
 
-  // ── Auth ─────────────────────────────────────────────────────────────────────
+  // ── Auth ──────────────────────────────────────────────────────────────────────
 
   private void ensureValidToken() throws Exception {
-    if (accessToken == null || Instant.now().isAfter(tokenExpiresAt.minusSeconds(60))) {
-      getAccessToken();
-    }
+    if (accessToken == null || Instant.now().isAfter(tokenExpiresAt.minusSeconds(60))) getAccessToken();
   }
 
   private void getAccessToken() throws Exception {
@@ -168,18 +197,15 @@ public class SpotifyService {
     HttpHeaders headers = new HttpHeaders();
     headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
     headers.set("Authorization", "Basic " + auth);
-
     ResponseEntity<Map> response = restTemplate.postForEntity(
             "https://accounts.spotify.com/api/token",
-            new HttpEntity<>("grant_type=client_credentials", headers),
-            Map.class);
-
+            new HttpEntity<>("grant_type=client_credentials", headers), Map.class);
     accessToken = (String) response.getBody().get("access_token");
     Integer expiresIn = (Integer) response.getBody().get("expires_in");
     tokenExpiresAt = Instant.now().plusSeconds(expiresIn != null ? expiresIn : 3600);
   }
 
-  // ── Utilities ────────────────────────────────────────────────────────────────
+  // ── Utilities ─────────────────────────────────────────────────────────────────
 
   private String extractPlaylistId(String url) {
     if (url == null || url.isBlank()) return null;
@@ -187,16 +213,6 @@ public class SpotifyService {
     if (url.contains("playlist/")) return url.split("playlist/")[1].split("[?]")[0];
     if (url.contains("playlist:")) return url.split("playlist:")[1];
     return null;
-  }
-
-  private String getArtistName(Map<String, Object> item) {
-    List<Map<String, Object>> artists = (List<Map<String, Object>>) item.get("artists");
-    return (String) artists.get(0).get("name");
-  }
-
-  private String getSpotifyUrl(Map<String, Object> item) {
-    Map<String, Object> urls = (Map<String, Object>) item.get("external_urls");
-    return (String) urls.get("spotify");
   }
 
   private List<Map<String, Object>> getMockSpotifyTracks() {
