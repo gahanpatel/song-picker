@@ -1,5 +1,6 @@
 package com.gahan.song.picker.controller;
 
+import com.gahan.song.picker.model.ImageAnalysis;
 import com.gahan.song.picker.service.OpenAIService;
 import com.gahan.song.picker.service.SpotifyService;
 
@@ -40,17 +41,17 @@ public class ImageController {
     }
 
     try {
-      String analysis = openAIService.analyzeImage(file);
+      ImageAnalysis imageAnalysis = openAIService.analyzeImage(file);
 
       List<Map<String, Object>> spotifyTracks;
       if (playlistUrl != null && !playlistUrl.isEmpty()) {
-        spotifyTracks = spotifyService.findPlaylistRecommendations(analysis, playlistUrl);
+        spotifyTracks = spotifyService.findPlaylistRecommendations(imageAnalysis, playlistUrl);
       } else {
-        spotifyTracks = spotifyService.findRecommendations(analysis);
+        spotifyTracks = spotifyService.findRecommendations(imageAnalysis);
       }
 
       return ResponseEntity.ok(Map.of(
-              "analysis", analysis,
+              "analysis", imageAnalysis.text,
               "spotify_tracks", spotifyTracks
       ));
     } catch (Exception e) {

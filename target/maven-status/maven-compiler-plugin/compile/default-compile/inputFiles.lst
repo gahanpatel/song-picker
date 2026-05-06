@@ -1,4 +1,5 @@
 /Users/gahanpatel/song-picker/src/main/java/com/gahan/song/picker/SongPickerApplication.java
 /Users/gahanpatel/song-picker/src/main/java/com/gahan/song/picker/controller/ImageController.java
+/Users/gahanpatel/song-picker/src/main/java/com/gahan/song/picker/model/ImageAnalysis.java
 /Users/gahanpatel/song-picker/src/main/java/com/gahan/song/picker/service/OpenAIService.java
 /Users/gahanpatel/song-picker/src/main/java/com/gahan/song/picker/service/SpotifyService.java
