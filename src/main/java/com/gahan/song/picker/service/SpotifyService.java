@@ -1,11 +1,11 @@
 package com.gahan.song.picker.service;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.http.*;
 
+import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -18,17 +18,13 @@ public class SpotifyService {
   @Value("${spotify.client.secret}")
   private String clientSecret;
 
-  @Autowired
-  private AcousticBrainzService acousticBrainzService;
-
   private final RestTemplate restTemplate = new RestTemplate();
   private String accessToken;
+  private Instant tokenExpiresAt = Instant.MIN;
 
   public List<Map<String, Object>> findPlaylistRecommendations(String aiAnalysis, String playlistUrl) {
     try {
-      if (accessToken == null) {
-        getAccessToken();
-      }
+      ensureValidToken();
 
       String playlistId = extractPlaylistId(playlistUrl);
       System.out.println("=== PLAYLIST DEBUG ===");
@@ -59,27 +55,26 @@ public class SpotifyService {
   }
 
   private List<Map<String, Object>> matchWithHybridApproach(List<Map<String, Object>> tracks, String aiAnalysis) {
-    System.out.println("=== HYBRID MATCHING (AcousticBrainz + Keywords) ===");
+    System.out.println("=== HYBRID MATCHING (Spotify Audio Features + Keywords) ===");
     List<TrackWithScore> scoredTracks = new ArrayList<>();
     MoodProfile targetMood = analyzeMoodProfile(aiAnalysis);
 
-    int acousticBrainzSuccess = 0;
+    int audioFeaturesSuccess = 0;
     int keywordFallback = 0;
 
     for (Map<String, Object> track : tracks) {
       String trackName = (String) track.get("name");
       String artist = (String) track.get("artist");
+      String trackId = (String) track.get("id");
       double score = 0.0;
 
-      Map<String, Double> audioFeatures = acousticBrainzService.getAudioFeatures(trackName, artist);
+      Map<String, Double> audioFeatures = trackId != null ? getSpotifyAudioFeatures(trackId) : null;
 
       if (audioFeatures != null && !audioFeatures.isEmpty()) {
-
         score = calculateFeatureMatchScore(targetMood, audioFeatures);
-        acousticBrainzSuccess++;
-        System.out.println("✓ AcousticBrainz: " + trackName + " (score: " + String.format("%.2f", score) + ")");
+        audioFeaturesSuccess++;
+        System.out.println("✓ Spotify audio features: " + trackName + " (score: " + String.format("%.2f", score) + ")");
       } else {
-
         score = calculateImprovedScore(track, aiAnalysis.toLowerCase());
         keywordFallback++;
         System.out.println("○ Keyword fallback: " + trackName + " (score: " + String.format("%.2f", score) + ")");
@@ -88,7 +83,7 @@ public class SpotifyService {
       scoredTracks.add(new TrackWithScore(track, score));
     }
 
-    System.out.println("Results: " + acousticBrainzSuccess + " with AcousticBrainz, " +
+    System.out.println("Results: " + audioFeaturesSuccess + " with Spotify audio features, " +
             keywordFallback + " with keywords");
 
     return scoredTracks.stream()
@@ -181,9 +176,7 @@ public class SpotifyService {
 
   public List<Map<String, Object>> findRecommendations(String aiAnalysis) {
     try {
-      if (accessToken == null) {
-        getAccessToken();
-      }
+      ensureValidToken();
 
       String searchQuery = extractSearchTerms(aiAnalysis);
       return searchTracks(searchQuery);
@@ -246,6 +239,7 @@ public class SpotifyService {
       Map<String, Object> track = (Map<String, Object>) item.get("track");
       if (track != null) {
         Map<String, Object> trackData = new HashMap<>();
+        trackData.put("id", track.get("id"));
         trackData.put("name", track.get("name"));
         trackData.put("artist", getArtistName(track));
         trackData.put("preview_url", track.get("preview_url"));
@@ -270,6 +264,14 @@ public class SpotifyService {
 
     ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
     accessToken = (String) response.getBody().get("access_token");
+    Integer expiresIn = (Integer) response.getBody().get("expires_in");
+    tokenExpiresAt = Instant.now().plusSeconds(expiresIn != null ? expiresIn : 3600);
+  }
+
+  private void ensureValidToken() throws Exception {
+    if (accessToken == null || Instant.now().isAfter(tokenExpiresAt.minusSeconds(60))) {
+      getAccessToken();
+    }
   }
 
   private List<Map<String, Object>> searchTracks(String query) throws Exception {
@@ -330,6 +332,35 @@ public class SpotifyService {
     );
   }
 
+
+  private Map<String, Double> getSpotifyAudioFeatures(String trackId) {
+    try {
+      String url = "https://api.spotify.com/v1/audio-features/" + trackId;
+      HttpHeaders headers = new HttpHeaders();
+      headers.set("Authorization", "Bearer " + accessToken);
+      HttpEntity<String> entity = new HttpEntity<>(headers);
+
+      ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+      Map<String, Object> data = response.getBody();
+      if (data == null) return null;
+
+      Map<String, Double> features = new HashMap<>();
+      Double energy = getDouble(data, "energy");
+      Double valence = getDouble(data, "valence");
+      Double danceability = getDouble(data, "danceability");
+      if (energy != null) features.put("energy", energy);
+      if (valence != null) features.put("valence", valence);
+      if (danceability != null) features.put("danceability", danceability);
+      return features.isEmpty() ? null : features;
+    } catch (Exception e) {
+      return null;
+    }
+  }
+
+  private Double getDouble(Map<String, Object> map, String key) {
+    Object value = map.get(key);
+    return value instanceof Number ? ((Number) value).doubleValue() : null;
+  }
 
   private static class MoodProfile {
     double energy, valence, danceability;
