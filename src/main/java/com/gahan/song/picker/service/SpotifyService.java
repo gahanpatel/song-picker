@@ -123,36 +123,52 @@ public class SpotifyService {
     String cacheKey = artist + "::" + trackName;
     if (lastFmTagCache.containsKey(cacheKey)) return lastFmTagCache.get(cacheKey);
 
+    List<String> tags = fetchTags("track.getTopTags", artist, trackName);
+    if (tags.isEmpty()) tags = fetchArtistTags(artist); // fall back to artist-level tags
+
+    lastFmTagCache.put(cacheKey, tags);
+    return tags;
+  }
+
+  private List<String> fetchTags(String method, String artist, String track) {
     try {
-      String url = LASTFM_URL + "?method=track.getInfo&format=json"
+      String url = LASTFM_URL + "?method=" + method + "&format=json"
               + "&api_key=" + lastFmApiKey
               + "&artist=" + URLEncoder.encode(artist != null ? artist : "", StandardCharsets.UTF_8)
-              + "&track="  + URLEncoder.encode(trackName != null ? trackName : "", StandardCharsets.UTF_8);
+              + "&track="  + URLEncoder.encode(track  != null ? track  : "", StandardCharsets.UTF_8);
 
       ResponseEntity<Map> resp = restTemplate.exchange(
               url, HttpMethod.GET, new HttpEntity<>(new HttpHeaders()), Map.class);
-      Map<String, Object> body = resp.getBody();
-      if (body == null || !body.containsKey("track")) { lastFmTagCache.put(cacheKey, List.of()); return List.of(); }
-
-      Map<String, Object> trackData = (Map<String, Object>) body.get("track");
-      Map<String, Object> toptags  = (Map<String, Object>) trackData.get("toptags");
-      if (toptags == null) { lastFmTagCache.put(cacheKey, List.of()); return List.of(); }
-
-      Object tagObj = toptags.get("tag");
-      if (!(tagObj instanceof List)) { lastFmTagCache.put(cacheKey, List.of()); return List.of(); }
-
-      List<String> tags = ((List<Map<String, Object>>) tagObj).stream()
-              .map(t -> ((String) t.get("name")).toLowerCase().trim())
-              .collect(Collectors.toList());
-
-      lastFmTagCache.put(cacheKey, tags);
-      return tags;
-
+      return extractTagNames(resp.getBody(), "toptags");
     } catch (Exception e) {
-      System.out.println("Last.fm lookup failed for '" + trackName + "': " + e.getMessage());
-      lastFmTagCache.put(cacheKey, List.of());
       return List.of();
     }
+  }
+
+  private List<String> fetchArtistTags(String artist) {
+    try {
+      String url = LASTFM_URL + "?method=artist.getTopTags&format=json"
+              + "&api_key=" + lastFmApiKey
+              + "&artist=" + URLEncoder.encode(artist != null ? artist : "", StandardCharsets.UTF_8);
+
+      ResponseEntity<Map> resp = restTemplate.exchange(
+              url, HttpMethod.GET, new HttpEntity<>(new HttpHeaders()), Map.class);
+      return extractTagNames(resp.getBody(), "toptags");
+    } catch (Exception e) {
+      return List.of();
+    }
+  }
+
+  private List<String> extractTagNames(Map<String, Object> body, String key) {
+    if (body == null || !body.containsKey(key)) return List.of();
+    Map<String, Object> toptags = (Map<String, Object>) body.get(key);
+    if (toptags == null) return List.of();
+    Object tagObj = toptags.get("tag");
+    if (!(tagObj instanceof List)) return List.of();
+    return ((List<Map<String, Object>>) tagObj).stream()
+            .map(t -> ((String) t.get("name")).toLowerCase().trim())
+            .filter(s -> !s.isBlank())
+            .collect(Collectors.toList());
   }
 
   private List<String> buildTargetTags(Map<String, Double> mood) {
@@ -163,22 +179,29 @@ public class SpotifyService {
     double acousticness = mood.getOrDefault("acousticness", 0.5);
 
     if (energy > 0.7)
-      tags.addAll(List.of("energetic", "upbeat", "intense", "powerful", "driving", "hard"));
+      tags.addAll(List.of("energetic", "upbeat", "intense", "powerful", "driving", "hard",
+                          "rock", "metal", "punk", "hip-hop", "rap", "edm", "dance"));
     else if (energy < 0.35)
-      tags.addAll(List.of("calm", "chill", "peaceful", "relaxing", "mellow", "ambient"));
+      tags.addAll(List.of("calm", "chill", "peaceful", "relaxing", "mellow", "ambient",
+                          "sleep", "meditation", "new age", "classical", "instrumental", "lo-fi", "soft"));
 
     if (valence > 0.7)
-      tags.addAll(List.of("happy", "cheerful", "feel-good", "positive", "joyful", "uplifting"));
+      tags.addAll(List.of("happy", "cheerful", "feel-good", "positive", "joyful", "uplifting",
+                          "fun", "summer", "pop", "disco", "funk", "bright"));
     else if (valence < 0.35)
-      tags.addAll(List.of("sad", "melancholy", "emotional", "dark", "melancholic"));
+      tags.addAll(List.of("sad", "melancholy", "emotional", "dark", "melancholic",
+                          "depressing", "emo", "blues", "heartbreak", "lonely"));
 
     if (danceability > 0.7)
-      tags.addAll(List.of("dance", "danceable", "groovy", "funky", "party"));
+      tags.addAll(List.of("dance", "danceable", "groovy", "funky", "party",
+                          "club", "house", "disco", "pop"));
 
     if (acousticness > 0.7)
-      tags.addAll(List.of("acoustic", "folk", "unplugged", "singer-songwriter"));
+      tags.addAll(List.of("acoustic", "folk", "unplugged", "singer-songwriter",
+                          "country", "indie folk", "ballad", "guitar"));
     else if (acousticness < 0.3)
-      tags.addAll(List.of("electronic", "edm", "electric", "synth"));
+      tags.addAll(List.of("electronic", "edm", "electric", "synth",
+                          "electro", "techno", "house", "industrial"));
 
     return tags;
   }
@@ -202,8 +225,7 @@ public class SpotifyService {
     }
 
     List<Map<String, Object>> tracks = new ArrayList<>();
-    String url = "https://api.spotify.com/v1/playlists/" + playlistId
-            + "/tracks?limit=100&fields=items(track(id,name,artists(name),external_urls)),next";
+    String url = "https://api.spotify.com/v1/playlists/" + playlistId + "/tracks?limit=100";
 
     while (url != null) {
       HttpHeaders headers = new HttpHeaders();

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import './App.css';
 
 function App() {
@@ -10,8 +10,6 @@ function App() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [dragging, setDragging] = useState(false);
-    const fileInputRef = useRef(null);
-
     useEffect(() => {
         if (!selectedFile) { setPreviewUrl(null); return; }
         const url = URL.createObjectURL(selectedFile);
@@ -75,7 +73,6 @@ function App() {
                 <div className="upload-card">
                     <div
                         className={`drop-zone${dragging ? ' dragging' : ''}${previewUrl ? ' has-preview' : ''}`}
-                        onClick={() => fileInputRef.current.click()}
                         onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
                         onDragLeave={() => setDragging(false)}
                         onDrop={handleDrop}
@@ -94,11 +91,11 @@ function App() {
                             </div>
                         )}
                         <input
-                            ref={fileInputRef}
                             type="file"
                             accept="image/*"
+                            onClick={(e) => { e.target.value = null; }}
                             onChange={(e) => handleFile(e.target.files[0])}
-                            className="hidden-input"
+                            className="file-overlay"
                         />
                     </div>
 
@@ -116,14 +113,30 @@ function App() {
 
                     {error && <p className="error-msg">{error}</p>}
 
-                    <button
-                        onClick={handleUpload}
-                        disabled={!selectedFile || loading}
-                        className="analyze-btn"
-                    >
-                        {loading && <span className="spinner" />}
-                        {loading ? 'Analyzing…' : 'Get Recommendations'}
-                    </button>
+                    <div className="btn-row">
+                        <button
+                            onClick={handleUpload}
+                            disabled={!selectedFile || loading}
+                            className="analyze-btn"
+                        >
+                            {loading && <span className="spinner" />}
+                            {loading ? 'Analyzing…' : 'Get Recommendations'}
+                        </button>
+                        {hasResults && (
+                            <button
+                                className="reset-btn"
+                                onClick={() => {
+                                    setSelectedFile(null);
+                                    setAnalysis('');
+                                    setSpotifyTracks([]);
+                                    setPlaylistUrl('');
+                                    setError('');
+                                }}
+                            >
+                                Try another image
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 {hasResults && (
