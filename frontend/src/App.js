@@ -99,7 +99,7 @@ function App() {
                         />
                     </div>
 
-                    {previewUrl && (
+                    {previewUrl && selectedFile && (
                         <p className="file-name">{selectedFile.name}</p>
                     )}
 

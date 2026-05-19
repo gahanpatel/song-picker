@@ -7,9 +7,11 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.http.*;
 
 import java.net.URLEncoder;
+import java.util.Arrays;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -28,10 +30,9 @@ public class SpotifyService {
   private String accessToken;
   private Instant tokenExpiresAt = Instant.MIN;
 
-  // Stores full track info (id, name, artist, spotify_url) keyed by playlist ID
   private final Map<String, List<Map<String, Object>>> playlistCache = new HashMap<>();
-  // "artist::trackname" → list of Last.fm tag names
-  private final Map<String, List<String>> lastFmTagCache = new HashMap<>();
+  private final Map<String, List<String>> lastFmTagCache = new ConcurrentHashMap<>();
+  private final ExecutorService tagFetcher = Executors.newFixedThreadPool(15);
 
   private static final String LASTFM_URL = "http://ws.audioscrobbler.com/2.0/";
 
@@ -47,7 +48,7 @@ public class SpotifyService {
       if (tracks.isEmpty()) return findRecommendations(analysis);
 
       if (lastFmApiKey != null && !lastFmApiKey.isBlank()) {
-        return scoreByLastFmTags(tracks, analysis.moodProfile, 5);
+        return scoreByLastFmTags(tracks, analysis, 5);
       }
 
       // No Last.fm key: return 5 random tracks from the playlist
@@ -66,12 +67,20 @@ public class SpotifyService {
   public List<Map<String, Object>> findRecommendations(ImageAnalysis analysis) {
     try {
       ensureValidToken();
-      String query = extractSearchTerms(analysis);
-      List<Map<String, Object>> results = searchTracks(query, 10);
+      String primaryQuery   = extractSearchTerms(analysis);
+      String secondaryQuery = extractSecondaryTerms(analysis);
+
+      // Two searches give a broader, more diverse candidate pool
+      List<Map<String, Object>> results = new ArrayList<>(searchTracks(primaryQuery, 8));
+      if (!secondaryQuery.equals(primaryQuery)) {
+        for (Map<String, Object> t : searchTracks(secondaryQuery, 8)) {
+          if (results.stream().noneMatch(r -> r.get("id").equals(t.get("id")))) results.add(t);
+        }
+      }
       if (results.isEmpty()) return getMockSpotifyTracks();
 
       if (lastFmApiKey != null && !lastFmApiKey.isBlank()) {
-        return scoreByLastFmTags(results, analysis.moodProfile, 5);
+        return scoreByLastFmTags(results, analysis, 5);
       }
 
       return results.stream().limit(5).collect(Collectors.toList());
@@ -84,29 +93,40 @@ public class SpotifyService {
   // ── Last.fm scoring ──────────────────────────────────────────────────────────
 
   private List<Map<String, Object>> scoreByLastFmTags(List<Map<String, Object>> tracks,
-                                                       Map<String, Double> mood, int limit) {
-    // Cap at 200 tracks to keep response time manageable for large playlists
-    List<Map<String, Object>> sample = tracks;
-    if (tracks.size() > 200) {
-      sample = new ArrayList<>(tracks);
-      Collections.shuffle(sample);
-      sample = sample.subList(0, 200);
-    }
-
-    List<String> targets = buildTargetTags(mood);
+                                                       ImageAnalysis analysis, int limit) {
+    List<String> targets = buildTargetTags(analysis.moodProfile, analysis.text);
     System.out.println("Last.fm target tags: " + targets);
+    System.out.println("Scoring " + tracks.size() + " tracks...");
+
+    // Fetch all tags in parallel — cached after first run so repeat requests are instant
+    List<CompletableFuture<Void>> futures = tracks.stream()
+            .map(t -> CompletableFuture.runAsync(
+                    () -> getLastFmTags((String) t.get("artist"), (String) t.get("name")), tagFetcher))
+            .collect(Collectors.toList());
+    CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
 
     List<Map.Entry<Map<String, Object>, Integer>> scored = new ArrayList<>();
-    for (Map<String, Object> track : sample) {
+    for (Map<String, Object> track : tracks) {
       List<String> tags = getLastFmTags((String) track.get("artist"), (String) track.get("name"));
       int score = countTagOverlap(tags, targets);
       scored.add(Map.entry(track, score));
     }
 
-    scored.sort((a, b) -> b.getValue() - a.getValue());
+    scored.sort((a, b) -> {
+      int cmp = b.getValue() - a.getValue();
+      if (cmp != 0) return cmp;
+      // Break ties alphabetically so results are stable across requests
+      return ((String) a.getKey().getOrDefault("name", ""))
+              .compareTo((String) b.getKey().getOrDefault("name", ""));
+    });
     if (!scored.isEmpty()) {
-      System.out.println("Top match: " + scored.get(0).getKey().get("name")
-              + " (score=" + scored.get(0).getValue() + ")");
+      Map<String, Object> top = scored.get(0).getKey();
+      List<String> topTags = getLastFmTags((String) top.get("artist"), (String) top.get("name"));
+      List<String> matched = topTags.stream().filter(tag ->
+              targets.stream().anyMatch(t -> tag.contains(t) || t.contains(tag))
+      ).collect(Collectors.toList());
+      System.out.println("Top match: " + top.get("name") + " – " + top.get("artist")
+              + " (score=" + scored.get(0).getValue() + ", matched tags=" + matched + ")");
     }
 
     return scored.stream()
@@ -124,7 +144,9 @@ public class SpotifyService {
     if (lastFmTagCache.containsKey(cacheKey)) return lastFmTagCache.get(cacheKey);
 
     List<String> tags = fetchTags("track.getTopTags", artist, trackName);
-    if (tags.isEmpty()) tags = fetchArtistTags(artist); // fall back to artist-level tags
+    // Artist tags are genre-level, not song-level — only use 2 to give a weak signal,
+    // not enough to beat a track that has real mood tags
+    if (tags.isEmpty()) tags = fetchArtistTags(artist).stream().limit(2).collect(Collectors.toList());
 
     lastFmTagCache.put(cacheKey, tags);
     return tags;
@@ -159,6 +181,8 @@ public class SpotifyService {
     }
   }
 
+  private static final int MIN_TAG_COUNT = 10;
+
   private List<String> extractTagNames(Map<String, Object> body, String key) {
     if (body == null || !body.containsKey(key)) return List.of();
     Map<String, Object> toptags = (Map<String, Object>) body.get(key);
@@ -166,12 +190,25 @@ public class SpotifyService {
     Object tagObj = toptags.get("tag");
     if (!(tagObj instanceof List)) return List.of();
     return ((List<Map<String, Object>>) tagObj).stream()
+            .filter(t -> {
+              Object count = t.get("count");
+              int c = count instanceof Number ? ((Number) count).intValue() : 0;
+              return c >= MIN_TAG_COUNT;
+            })
             .map(t -> ((String) t.get("name")).toLowerCase().trim())
             .filter(s -> !s.isBlank())
             .collect(Collectors.toList());
   }
 
-  private List<String> buildTargetTags(Map<String, Double> mood) {
+  private static final Set<String> STOP_WORDS = Set.of(
+          "the","and","with","that","this","from","have","which","there","their",
+          "been","were","they","when","what","will","your","about","also","very",
+          "more","some","into","than","then","just","like","over","such","both",
+          "each","most","other","these","those","only","even","much","well","here",
+          "scene","image","photo","picture","overall","feel","sense","tone","mood"
+  );
+
+  private List<String> buildTargetTags(Map<String, Double> mood, String analysisText) {
     List<String> tags = new ArrayList<>();
     double energy       = mood.getOrDefault("energy",       0.5);
     double valence      = mood.getOrDefault("valence",      0.5);
@@ -179,29 +216,29 @@ public class SpotifyService {
     double acousticness = mood.getOrDefault("acousticness", 0.5);
 
     if (energy > 0.7)
-      tags.addAll(List.of("energetic", "upbeat", "intense", "powerful", "driving", "hard",
-                          "rock", "metal", "punk", "hip-hop", "rap", "edm", "dance"));
+      tags.addAll(List.of("energetic", "upbeat", "intense", "powerful", "driving", "aggressive", "loud"));
     else if (energy < 0.35)
-      tags.addAll(List.of("calm", "chill", "peaceful", "relaxing", "mellow", "ambient",
-                          "sleep", "meditation", "new age", "classical", "instrumental", "lo-fi", "soft"));
+      tags.addAll(List.of("calm", "chill", "peaceful", "relaxing", "mellow", "ambient", "soft", "lo-fi", "quiet"));
 
     if (valence > 0.7)
-      tags.addAll(List.of("happy", "cheerful", "feel-good", "positive", "joyful", "uplifting",
-                          "fun", "summer", "pop", "disco", "funk", "bright"));
+      tags.addAll(List.of("happy", "cheerful", "feel-good", "positive", "joyful", "uplifting", "bright", "euphoric"));
     else if (valence < 0.35)
-      tags.addAll(List.of("sad", "melancholy", "emotional", "dark", "melancholic",
-                          "depressing", "emo", "blues", "heartbreak", "lonely"));
+      tags.addAll(List.of("sad", "melancholy", "emotional", "dark", "melancholic", "heartbreak", "lonely", "depressing", "somber"));
 
     if (danceability > 0.7)
-      tags.addAll(List.of("dance", "danceable", "groovy", "funky", "party",
-                          "club", "house", "disco", "pop"));
+      tags.addAll(List.of("dance", "danceable", "groovy", "energetic", "rhythmic", "bouncy"));
 
     if (acousticness > 0.7)
-      tags.addAll(List.of("acoustic", "folk", "unplugged", "singer-songwriter",
-                          "country", "indie folk", "ballad", "guitar"));
+      tags.addAll(List.of("acoustic", "unplugged", "organic", "intimate", "warm"));
     else if (acousticness < 0.3)
-      tags.addAll(List.of("electronic", "edm", "electric", "synth",
-                          "electro", "techno", "house", "industrial"));
+      tags.addAll(List.of("electronic", "synthetic", "cold", "digital"));
+
+    // Pull descriptive words from GPT's analysis — "cinematic", "ethereal", etc. often match Last.fm tags
+    if (analysisText != null) {
+      Arrays.stream(analysisText.toLowerCase().replaceAll("[^a-z\\s]", " ").split("\\s+"))
+              .filter(w -> w.length() > 4 && !STOP_WORDS.contains(w))
+              .forEach(tags::add);
+    }
 
     return tags;
   }
@@ -287,6 +324,23 @@ public class SpotifyService {
       tracks.add(track);
     }
     return tracks;
+  }
+
+  private String extractSecondaryTerms(ImageAnalysis analysis) {
+    Map<String, Double> m = analysis.moodProfile;
+    double energy       = m.getOrDefault("energy",       0.5);
+    double valence      = m.getOrDefault("valence",      0.5);
+    double acousticness = m.getOrDefault("acousticness", 0.5);
+
+    // Complement the primary query with a different angle
+    if (energy > 0.7 && valence > 0.6)  return "feel good anthems";
+    if (energy > 0.7)                   return "powerful workout music";
+    if (valence < 0.35 && acousticness > 0.5) return "sad acoustic songs";
+    if (valence < 0.35)                 return "melancholic indie";
+    if (acousticness > 0.7)             return "acoustic singer songwriter";
+    if (energy < 0.35)                  return "ambient instrumental relaxing";
+    if (valence > 0.65)                 return "feel good pop";
+    return "indie atmospheric";
   }
 
   private String extractSearchTerms(ImageAnalysis analysis) {
