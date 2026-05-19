@@ -21,14 +21,19 @@ public class SpotifyService {
   @Value("${spotify.client.secret}")
   private String clientSecret;
 
+  @Value("${lastfm.api.key:}")
+  private String lastFmApiKey;
+
   private final RestTemplate restTemplate = new RestTemplate();
   private String accessToken;
   private Instant tokenExpiresAt = Instant.MIN;
 
-  // Cache playlist track IDs by playlist ID — avoids re-fetching paginated Spotify calls
-  private final Map<String, List<String>> playlistCache = new HashMap<>();
+  // Stores full track info (id, name, artist, spotify_url) keyed by playlist ID
+  private final Map<String, List<Map<String, Object>>> playlistCache = new HashMap<>();
+  // "artist::trackname" → list of Last.fm tag names
+  private final Map<String, List<String>> lastFmTagCache = new HashMap<>();
 
-  private static final String RECCOBEATS_URL = "https://api.reccobeats.com/v1/track/recommendation";
+  private static final String LASTFM_URL = "http://ws.audioscrobbler.com/2.0/";
 
   // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -38,13 +43,19 @@ public class SpotifyService {
       String playlistId = extractPlaylistId(playlistUrl);
       if (playlistId == null) return findRecommendations(analysis);
 
-      List<String> trackIds = getPlaylistTrackIds(playlistId);
-      if (trackIds.isEmpty()) return findRecommendations(analysis);
+      List<Map<String, Object>> tracks = getPlaylistTracks(playlistId);
+      if (tracks.isEmpty()) return findRecommendations(analysis);
 
-      Collections.shuffle(trackIds);
-      List<String> seeds = trackIds.stream().limit(5).collect(Collectors.toList());
+      if (lastFmApiKey != null && !lastFmApiKey.isBlank()) {
+        return scoreByLastFmTags(tracks, analysis.moodProfile, 5);
+      }
 
-      return reccoBeatsRecommendations(seeds, analysis.moodProfile);
+      // No Last.fm key: return 5 random tracks from the playlist
+      List<Map<String, Object>> shuffled = new ArrayList<>(tracks);
+      Collections.shuffle(shuffled);
+      return shuffled.stream().limit(5)
+              .map(t -> { Map<String, Object> r = new HashMap<>(t); r.remove("id"); return r; })
+              .collect(Collectors.toList());
 
     } catch (Exception e) {
       System.out.println("Playlist recommendations failed: " + e.getMessage());
@@ -55,67 +66,178 @@ public class SpotifyService {
   public List<Map<String, Object>> findRecommendations(ImageAnalysis analysis) {
     try {
       ensureValidToken();
-
-      // Search Spotify for 1-3 seed tracks matching the mood, then use them as ReccoBeats seeds
       String query = extractSearchTerms(analysis);
-      List<String> seeds = searchTrackIds(query, 3);
-      if (seeds.isEmpty()) return getMockSpotifyTracks();
+      List<Map<String, Object>> results = searchTracks(query, 10);
+      if (results.isEmpty()) return getMockSpotifyTracks();
 
-      return reccoBeatsRecommendations(seeds, analysis.moodProfile);
+      if (lastFmApiKey != null && !lastFmApiKey.isBlank()) {
+        return scoreByLastFmTags(results, analysis.moodProfile, 5);
+      }
 
+      return results.stream().limit(5).collect(Collectors.toList());
     } catch (Exception e) {
       System.out.println("Recommendations failed: " + e.getMessage());
       return getMockSpotifyTracks();
     }
   }
 
-  // ── ReccoBeats ───────────────────────────────────────────────────────────────
+  // ── Last.fm scoring ──────────────────────────────────────────────────────────
 
-  private List<Map<String, Object>> reccoBeatsRecommendations(List<String> seedIds,
-                                                               Map<String, Double> mood) throws Exception {
+  private List<Map<String, Object>> scoreByLastFmTags(List<Map<String, Object>> tracks,
+                                                       Map<String, Double> mood, int limit) {
+    // Cap at 200 tracks to keep response time manageable for large playlists
+    List<Map<String, Object>> sample = tracks;
+    if (tracks.size() > 200) {
+      sample = new ArrayList<>(tracks);
+      Collections.shuffle(sample);
+      sample = sample.subList(0, 200);
+    }
+
+    List<String> targets = buildTargetTags(mood);
+    System.out.println("Last.fm target tags: " + targets);
+
+    List<Map.Entry<Map<String, Object>, Integer>> scored = new ArrayList<>();
+    for (Map<String, Object> track : sample) {
+      List<String> tags = getLastFmTags((String) track.get("artist"), (String) track.get("name"));
+      int score = countTagOverlap(tags, targets);
+      scored.add(Map.entry(track, score));
+    }
+
+    scored.sort((a, b) -> b.getValue() - a.getValue());
+    if (!scored.isEmpty()) {
+      System.out.println("Top match: " + scored.get(0).getKey().get("name")
+              + " (score=" + scored.get(0).getValue() + ")");
+    }
+
+    return scored.stream()
+            .limit(limit)
+            .map(e -> {
+              Map<String, Object> t = new HashMap<>(e.getKey());
+              t.remove("id");
+              return t;
+            })
+            .collect(Collectors.toList());
+  }
+
+  private List<String> getLastFmTags(String artist, String trackName) {
+    String cacheKey = artist + "::" + trackName;
+    if (lastFmTagCache.containsKey(cacheKey)) return lastFmTagCache.get(cacheKey);
+
+    try {
+      String url = LASTFM_URL + "?method=track.getInfo&format=json"
+              + "&api_key=" + lastFmApiKey
+              + "&artist=" + URLEncoder.encode(artist != null ? artist : "", StandardCharsets.UTF_8)
+              + "&track="  + URLEncoder.encode(trackName != null ? trackName : "", StandardCharsets.UTF_8);
+
+      ResponseEntity<Map> resp = restTemplate.exchange(
+              url, HttpMethod.GET, new HttpEntity<>(new HttpHeaders()), Map.class);
+      Map<String, Object> body = resp.getBody();
+      if (body == null || !body.containsKey("track")) { lastFmTagCache.put(cacheKey, List.of()); return List.of(); }
+
+      Map<String, Object> trackData = (Map<String, Object>) body.get("track");
+      Map<String, Object> toptags  = (Map<String, Object>) trackData.get("toptags");
+      if (toptags == null) { lastFmTagCache.put(cacheKey, List.of()); return List.of(); }
+
+      Object tagObj = toptags.get("tag");
+      if (!(tagObj instanceof List)) { lastFmTagCache.put(cacheKey, List.of()); return List.of(); }
+
+      List<String> tags = ((List<Map<String, Object>>) tagObj).stream()
+              .map(t -> ((String) t.get("name")).toLowerCase().trim())
+              .collect(Collectors.toList());
+
+      lastFmTagCache.put(cacheKey, tags);
+      return tags;
+
+    } catch (Exception e) {
+      System.out.println("Last.fm lookup failed for '" + trackName + "': " + e.getMessage());
+      lastFmTagCache.put(cacheKey, List.of());
+      return List.of();
+    }
+  }
+
+  private List<String> buildTargetTags(Map<String, Double> mood) {
+    List<String> tags = new ArrayList<>();
     double energy       = mood.getOrDefault("energy",       0.5);
     double valence      = mood.getOrDefault("valence",      0.5);
     double danceability = mood.getOrDefault("danceability", 0.5);
     double acousticness = mood.getOrDefault("acousticness", 0.5);
 
-    String seeds = String.join(",", seedIds);
-    String url = RECCOBEATS_URL
-            + "?seeds=" + seeds
-            + "&size=5"
-            + "&energy="       + String.format("%.2f", energy)
-            + "&valence="      + String.format("%.2f", valence)
-            + "&danceability=" + String.format("%.2f", danceability)
-            + "&acousticness=" + String.format("%.2f", acousticness);
+    if (energy > 0.7)
+      tags.addAll(List.of("energetic", "upbeat", "intense", "powerful", "driving", "hard"));
+    else if (energy < 0.35)
+      tags.addAll(List.of("calm", "chill", "peaceful", "relaxing", "mellow", "ambient"));
 
-    ResponseEntity<Map> response = restTemplate.exchange(
-            url, HttpMethod.GET, new HttpEntity<>(new HttpHeaders()), Map.class);
+    if (valence > 0.7)
+      tags.addAll(List.of("happy", "cheerful", "feel-good", "positive", "joyful", "uplifting"));
+    else if (valence < 0.35)
+      tags.addAll(List.of("sad", "melancholy", "emotional", "dark", "melancholic"));
 
-    List<Map<String, Object>> content = (List<Map<String, Object>>) response.getBody().get("content");
-    System.out.println("ReccoBeats returned " + (content != null ? content.size() : 0) + " tracks");
-    return parseReccoBeats(content);
+    if (danceability > 0.7)
+      tags.addAll(List.of("dance", "danceable", "groovy", "funky", "party"));
+
+    if (acousticness > 0.7)
+      tags.addAll(List.of("acoustic", "folk", "unplugged", "singer-songwriter"));
+    else if (acousticness < 0.3)
+      tags.addAll(List.of("electronic", "edm", "electric", "synth"));
+
+    return tags;
   }
 
-  private List<Map<String, Object>> parseReccoBeats(List<Map<String, Object>> content) {
-    List<Map<String, Object>> tracks = new ArrayList<>();
-    if (content == null) return tracks;
-
-    for (Map<String, Object> item : content) {
-      List<Map<String, Object>> artists = (List<Map<String, Object>>) item.get("artists");
-      String artist = artists != null && !artists.isEmpty() ? (String) artists.get(0).get("name") : "Unknown";
-
-      Map<String, Object> track = new HashMap<>();
-      track.put("name",        item.get("trackTitle"));
-      track.put("artist",      artist);
-      track.put("spotify_url", item.get("href"));
-      track.put("preview_url", null);
-      tracks.add(track);
+  private int countTagOverlap(List<String> trackTags, List<String> targetTags) {
+    int count = 0;
+    for (String tag : trackTags) {
+      for (String target : targetTags) {
+        if (tag.contains(target) || target.contains(tag)) { count++; break; }
+      }
     }
-    return tracks;
+    return count;
   }
 
   // ── Spotify helpers ───────────────────────────────────────────────────────────
 
-  private List<String> searchTrackIds(String query, int limit) throws Exception {
+  private List<Map<String, Object>> getPlaylistTracks(String playlistId) throws Exception {
+    if (playlistCache.containsKey(playlistId)) {
+      System.out.println("Playlist cache hit for " + playlistId);
+      return playlistCache.get(playlistId);
+    }
+
+    List<Map<String, Object>> tracks = new ArrayList<>();
+    String url = "https://api.spotify.com/v1/playlists/" + playlistId
+            + "/tracks?limit=100&fields=items(track(id,name,artists(name),external_urls)),next";
+
+    while (url != null) {
+      HttpHeaders headers = new HttpHeaders();
+      headers.set("Authorization", "Bearer " + accessToken);
+      ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+      Map<String, Object> body = response.getBody();
+
+      for (Map<String, Object> item : (List<Map<String, Object>>) body.get("items")) {
+        Map<String, Object> trackData = (Map<String, Object>) item.get("track");
+        if (trackData == null || trackData.get("id") == null) continue;
+
+        List<Map<String, Object>> artistList = (List<Map<String, Object>>) trackData.get("artists");
+        String artist = (artistList != null && !artistList.isEmpty())
+                ? (String) artistList.get(0).get("name") : "Unknown";
+        Map<String, Object> extUrls = (Map<String, Object>) trackData.get("external_urls");
+        String spotifyUrl = extUrls != null ? (String) extUrls.get("spotify") : "";
+
+        Map<String, Object> track = new HashMap<>();
+        track.put("id",          trackData.get("id"));
+        track.put("name",        trackData.get("name"));
+        track.put("artist",      artist);
+        track.put("spotify_url", spotifyUrl);
+        track.put("preview_url", null);
+        tracks.add(track);
+      }
+      url = (String) body.get("next");
+    }
+
+    System.out.println("Loaded " + tracks.size() + " tracks from playlist, caching");
+    playlistCache.put(playlistId, tracks);
+    return tracks;
+  }
+
+  private List<Map<String, Object>> searchTracks(String query, int limit) throws Exception {
     String url = "https://api.spotify.com/v1/search?q="
             + URLEncoder.encode(query, StandardCharsets.UTF_8)
             + "&type=track&limit=" + limit;
@@ -126,38 +248,23 @@ public class SpotifyService {
     List<Map<String, Object>> items = (List<Map<String, Object>>)
             ((Map<String, Object>) response.getBody().get("tracks")).get("items");
 
-    return items.stream()
-            .map(item -> (String) item.get("id"))
-            .filter(Objects::nonNull)
-            .collect(Collectors.toList());
-  }
+    List<Map<String, Object>> tracks = new ArrayList<>();
+    for (Map<String, Object> item : items) {
+      List<Map<String, Object>> artistList = (List<Map<String, Object>>) item.get("artists");
+      String artist = (artistList != null && !artistList.isEmpty())
+              ? (String) artistList.get(0).get("name") : "Unknown";
+      Map<String, Object> extUrls = (Map<String, Object>) item.get("external_urls");
+      String spotifyUrl = extUrls != null ? (String) extUrls.get("spotify") : "";
 
-  private List<String> getPlaylistTrackIds(String playlistId) throws Exception {
-    if (playlistCache.containsKey(playlistId)) {
-      System.out.println("Playlist cache hit for " + playlistId);
-      return playlistCache.get(playlistId);
+      Map<String, Object> track = new HashMap<>();
+      track.put("id",          item.get("id"));
+      track.put("name",        item.get("name"));
+      track.put("artist",      artist);
+      track.put("spotify_url", spotifyUrl);
+      track.put("preview_url", item.get("preview_url"));
+      tracks.add(track);
     }
-
-    List<String> ids = new ArrayList<>();
-    String url = "https://api.spotify.com/v1/playlists/" + playlistId
-            + "/tracks?limit=100&fields=items(track(id)),next";
-
-    while (url != null) {
-      HttpHeaders headers = new HttpHeaders();
-      headers.set("Authorization", "Bearer " + accessToken);
-      ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers), Map.class);
-      Map<String, Object> body = response.getBody();
-
-      for (Map<String, Object> item : (List<Map<String, Object>>) body.get("items")) {
-        Map<String, Object> track = (Map<String, Object>) item.get("track");
-        if (track != null && track.get("id") != null) ids.add((String) track.get("id"));
-      }
-      url = (String) body.get("next");
-    }
-
-    System.out.println("Loaded " + ids.size() + " track IDs from playlist, caching");
-    playlistCache.put(playlistId, ids);
-    return ids;
+    return tracks;
   }
 
   private String extractSearchTerms(ImageAnalysis analysis) {
