@@ -56,6 +56,7 @@ public class OpenAIService {
             - "danceability": 0.0-1.0 (0=still/contemplative, 1=rhythmic/danceable)
             - "acousticness": 0.0-1.0 (0=urban/electronic/synthetic feel, 1=natural/organic/acoustic feel)
             - "tempo": 0.0-1.0 (0=very slow/static, 1=very fast-paced/frantic)
+            - "suggested_songs": array of exactly 5 objects, each with "title" and "artist" — real existing songs that genuinely match the mood and atmosphere of this image
             Return only valid JSON with no markdown formatting or code blocks.
             """;
 
@@ -70,7 +71,7 @@ public class OpenAIService {
                             ))
                     )
             )),
-            "max_tokens", 400
+            "max_tokens", 700
     );
   }
 
@@ -79,7 +80,6 @@ public class OpenAIService {
       List<Map<String, Object>> choices = (List<Map<String, Object>>) response.get("choices");
       String content = (String) ((Map<String, Object>) choices.get(0).get("message")).get("content");
 
-      // Strip markdown code fences if GPT wraps the JSON anyway
       content = content.replaceAll("(?s)```[a-z]*\\s*", "").replaceAll("```", "").trim();
 
       Map<String, Object> parsed = objectMapper.readValue(content, Map.class);
@@ -91,7 +91,14 @@ public class OpenAIService {
         if (val instanceof Number) moodProfile.put(key, ((Number) val).doubleValue());
       }
 
-      return new ImageAnalysis(explanation, moodProfile);
+      List<Map<String, String>> suggestedSongs = List.of();
+      Object songsObj = parsed.get("suggested_songs");
+      if (songsObj instanceof List) {
+        suggestedSongs = (List<Map<String, String>>) songsObj;
+      }
+
+      System.out.println("GPT suggested songs: " + suggestedSongs);
+      return new ImageAnalysis(explanation, moodProfile, suggestedSongs);
 
     } catch (Exception e) {
       System.out.println("Failed to parse OpenAI JSON response: " + e.getMessage());
